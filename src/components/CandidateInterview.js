@@ -15,7 +15,14 @@ import {
   useTheme,
   Grid
 } from '@mui/material';
-import { getInterviewByCode, saveCandidateInfo, subscribeToInterview, submitAnswer, completeInterview } from '../services/firebase';
+import {
+  getInterviewByCode, 
+  saveCandidateInfo, 
+  subscribeToInterview, 
+  submitAnswer, 
+  completeInterview 
+} from '../services/firebaseService';
+import { useFirebase } from '../contexts/FirebaseContext';
 import { CodeEditor } from './CodeEditor';
 import ChatInterface from './ChatInterface';
 
@@ -23,6 +30,7 @@ const CandidateInterview = () => {
   const { code } = useParams();
   const navigate = useNavigate();
   const theme = useTheme();
+  const { db } = useFirebase();
   
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -45,35 +53,45 @@ const CandidateInterview = () => {
         setLoading(true);
         setError(null);
         
-        const data = await getInterviewByCode(code);
+        const data = await getInterviewByCode(db, code);
+        
         if (!data) {
-          throw new Error('Interview not found');
+          setError('Interview not found. Please check the code and try again.');
+          return;
         }
+
+        // Check if interview is still active
+        const endDate = new Date(data.endDate);
+        const now = new Date();
+        
+        if (endDate < now) {
+          setError('This interview is no longer active.');
+          return;
+        }
+
         setInterview(data);
         
-        unsubscribe = subscribeToInterview(code, (updatedData) => {
-          if (!updatedData) {
-            setError('Interview not found or has been deleted');
-            return;
-          }
-          setInterview(updatedData);
+        unsubscribe = subscribeToInterview(db, data.id, (updatedInterview) => {
+          setInterview(updatedInterview);
         });
         
       } catch (err) {
-        console.error('Error loading interview:', err);
-        setError(err.message || 'Failed to load interview');
+        setError(err.message);
       } finally {
         setLoading(false);
       }
     };
 
-    loadInterview();
+    if (code && db) {
+      loadInterview();
+    }
+
     return () => {
       if (unsubscribe) {
         unsubscribe();
       }
     };
-  }, [code]);
+  }, [code, db]);
 
   const handleStartInterview = async (e) => {
     e.preventDefault();
@@ -86,11 +104,10 @@ const CandidateInterview = () => {
         return;
       }
       
-      await saveCandidateInfo(interview.id, candidate);
+      await saveCandidateInfo(db, interview.id, candidate);
       setCurrentQuestionIndex(0);
     } catch (err) {
-      console.error('Error starting interview:', err);
-      setError('Failed to start interview. Please try again.');
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -101,7 +118,7 @@ const CandidateInterview = () => {
       setSubmitting(true);
       setError(null);
 
-      const result = await submitAnswer(interview.id, currentQuestionIndex, answer);
+      const result = await submitAnswer(db, interview.id, currentQuestionIndex, answer);
       
       setInterview(prev => ({
         ...prev,
@@ -119,13 +136,12 @@ const CandidateInterview = () => {
       setFeedback(result.evaluation);
       
       if (currentQuestionIndex === interview.questions.length - 1) {
-        await completeInterview(interview.id);
+        await completeInterview(db, interview.id);
         setShowChat(true);
       }
 
     } catch (err) {
-      console.error('Error submitting answer:', err);
-      setError('Failed to submit answer. Please try again.');
+      setError(err.message);
     } finally {
       setSubmitting(false);
     }

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { doc, getDoc } from 'firebase/firestore';
 import {
   Container,
   Box,
@@ -15,160 +16,101 @@ import {
   Checkbox,
   CircularProgress,
   Alert,
-  IconButton,
   Card,
   CardContent,
   Chip,
   useTheme,
-  AppBar,
-  Toolbar,
   MenuItem,
   Select,
   FormControl,
-  InputLabel
+  InputLabel,
+  Snackbar,
+  Fade
 } from '@mui/material';
+import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import {
   Plus as PlusIcon,
   Copy as CopyIcon,
-  X as XIcon,
-  Code2 as CodeIcon,
-  Briefcase as BriefcaseIcon,
-  ChevronRight as ChevronRightIcon,
-  Sun as SunIcon,
-  Moon as MoonIcon,
-  Trash2 as Trash2Icon
+  Check as CheckIcon,
+  Trash2 as Trash2Icon,
 } from 'lucide-react';
-import { DatePicker } from '@mui/x-date-pickers';
-import { createInterview, getCompanyInterviews, deleteInterview } from '../services/firebase';
+import { createInterview, getCompanyInterviews, deleteInterview } from '../services/firebaseService';
+import { useFirebase } from '../contexts/FirebaseContext';
+import { Navbar } from './landing/Navbar';
+import { Footer } from './landing/Footer';
 
-// Skills configuration
 const SKILLS_CONFIG = {
   javascript: { label: 'JavaScript', checked: false },
   python: { label: 'Python', checked: false },
   react: { label: 'React', checked: false },
   node: { label: 'Node.js', checked: false },
-  qa: { label: 'QA', checked: false },
   testing: { label: 'Testing', checked: false }
 };
 
-const CompanyDashboard = ({ darkMode, toggleDarkMode, companyId = 'test-company' }) => {
+const CompanyDashboard = () => {
   const navigate = useNavigate();
   const theme = useTheme();
+  const { db, auth } = useFirebase();
   
   const [interviews, setInterviews] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [openDialog, setOpenDialog] = useState(false);
+  const [companyData, setCompanyData] = useState(null);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(null);
   const [newInterview, setNewInterview] = useState({
     position: '',
     description: '',
-    level: 'middle',
+    level: 'Middle',
+    endDate: null,
     skills: []
   });
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [interviewToDelete, setInterviewToDelete] = useState(null);
 
-  // Create a test interview for development
-  const createTestInterview = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      
-      const testInterview = {
-        position: 'QA Engineer',
-        description: 'We are looking for a QA Engineer with strong Python skills',
-        level: 'middle',
-        skills: ['python', 'qa', 'testing'],
-        companyId: companyId,
-        questions: [
-          {
-            id: '1',
-            type: 'coding',
-            content: 'Write a Python function to validate email addresses using regex.',
-            expectedAnswer: 'import re\n\ndef validate_email(email):\n    pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"\n    return bool(re.match(pattern, email))',
-            maxScore: 10
-          },
-          {
-            id: '2',
-            type: 'theory',
-            content: 'Explain the difference between unit testing and integration testing.',
-            expectedAnswer: 'Unit testing focuses on individual components while integration testing verifies interactions between components.',
-            maxScore: 10
-          }
-        ]
-      };
-
-      const result = await createInterview(testInterview);
-      console.log('Test interview created:', result);
-      
-      // Copy interview code to clipboard
-      navigator.clipboard.writeText(result.code);
-      alert(`Test interview created! Code: ${result.code} (copied to clipboard)`);
-      
-      // Refresh interviews list
-      fetchInterviews();
-    } catch (error) {
-      console.error('Error creating test interview:', error);
-      setError(error.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Fetch interviews on component mount
   useEffect(() => {
+    const loadCompanyData = async () => {
+      try {
+        if (!auth.currentUser) return;
+        
+        const companyRef = doc(db, 'companies', auth.currentUser.uid);
+        const companySnap = await getDoc(companyRef);
+        
+        if (companySnap.exists()) {
+          setCompanyData(companySnap.data());
+        } else {
+          setError('Company not found');
+        }
+      } catch (err) {
+        setError('Error loading company data: ' + err.message);
+      }
+    };
+
     const loadInterviews = async () => {
       try {
-        setLoading(true);
-        setError(null);
-        console.log('Loading interviews for company:', companyId);
-        
-        if (!companyId) {
-          throw new Error('Company ID is required');
-        }
-
-        const data = await getCompanyInterviews(companyId);
-        console.log('Loaded interviews:', data);
-        
-        if (!data) {
-          console.warn('No interviews found');
-          setInterviews([]);
-          return;
-        }
-
+        if (!auth.currentUser) return;
+        const data = await getCompanyInterviews(db, auth.currentUser.uid);
         setInterviews(data);
       } catch (err) {
-        console.error('Error loading interviews:', err);
-        setError(err.message || 'Failed to load interviews. Please check your Firebase configuration and network connection.');
-        setInterviews([]);
+        setError('Error loading interviews: ' + err.message);
       } finally {
         setLoading(false);
       }
     };
 
-    loadInterviews();
-  }, [companyId]);
+    if (db && auth.currentUser) {
+      loadCompanyData();
+      loadInterviews();
+    }
+  }, [db, auth.currentUser]);
 
   const fetchInterviews = async () => {
     try {
       setLoading(true);
-      setError(null);
-      
-      if (!companyId) {
-        throw new Error('Company ID is required');
-      }
-
-      const data = await getCompanyInterviews(companyId);
-      
-      if (!data) {
-        console.warn('No interviews found');
-        setInterviews([]);
-        return;
-      }
-
+      const data = await getCompanyInterviews(db, auth.currentUser.uid);
       setInterviews(data);
     } catch (err) {
-      console.error('Error fetching interviews:', err);
-      setError(err.message || 'Failed to load interviews. Please check your Firebase configuration and network connection.');
-      setInterviews([]);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -180,8 +122,9 @@ const CompanyDashboard = ({ darkMode, toggleDarkMode, companyId = 'test-company'
       setError(null);
       
       // Validate required fields
-      if (!newInterview.position || !newInterview.level) {
+      if (!newInterview.position || !newInterview.description || !newInterview.level || !newInterview.endDate) {
         setError('Please fill in all required fields');
+        setLoading(false);
         return;
       }
 
@@ -189,46 +132,39 @@ const CompanyDashboard = ({ darkMode, toggleDarkMode, companyId = 'test-company'
         .filter(([key, value]) => value.checked)
         .map(([key]) => key);
 
-      if (selectedSkills.length === 0) {
-        setError('Please select at least one skill');
-        return;
-      }
-
       const interviewData = {
-        ...newInterview,
+        position: newInterview.position,
+        description: newInterview.description,
+        level: newInterview.level,
+        endDate: newInterview.endDate.toISOString(),
         skills: selectedSkills,
-        companyId,
-        questions: [], // Will be generated by OpenAI service
+        companyId: auth.currentUser.uid,
+        questions: [],
         answers: {},
         evaluations: {},
-        status: 'pending',
-        createdAt: new Date().toISOString()
+        status: 'pending'
       };
 
-      const result = await createInterview(interviewData);
-      console.log('Interview created:', result);
+      await createInterview(db, interviewData);
       
-      if (result?.code) {
-        // Copy interview code to clipboard
-        navigator.clipboard.writeText(result.code);
-        alert(`Interview created! Code: ${result.code} (copied to clipboard)`);
-        
-        // Reset form
-        setNewInterview({
-          position: '',
-          description: '',
-          level: 'middle',
-          skills: []
-        });
-        
-        // Close dialog
-        setOpenDialog(false);
-        
-        // Refresh interviews list
-        fetchInterviews();
-      } else {
-        throw new Error('Failed to create interview');
-      }
+      // Reset form and SKILLS_CONFIG
+      Object.keys(SKILLS_CONFIG).forEach(key => {
+        SKILLS_CONFIG[key].checked = false;
+      });
+      
+      setNewInterview({
+        position: '',
+        description: '',
+        level: 'Middle',
+        endDate: null,
+        skills: []
+      });
+      
+      // Close dialog
+      setCreateDialogOpen(false);
+      
+      // Refresh interviews list
+      fetchInterviews();
     } catch (err) {
       console.error('Error creating interview:', err);
       setError(err.message || 'Failed to create interview');
@@ -237,156 +173,220 @@ const CompanyDashboard = ({ darkMode, toggleDarkMode, companyId = 'test-company'
     }
   };
 
-  const handleDeleteInterview = async (interviewId) => {
+  const handleDeleteClick = (interview) => {
+    setInterviewToDelete(interview);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!interviewToDelete) return;
+    
     try {
       setLoading(true);
-      setError(null);
-      await deleteInterview(interviewId);
-      fetchInterviews();
+      await deleteInterview(db, interviewToDelete.id);
+      await fetchInterviews();
     } catch (err) {
       console.error('Error deleting interview:', err);
       setError('Failed to delete interview');
     } finally {
       setLoading(false);
+      setDeleteDialogOpen(false);
+      setInterviewToDelete(null);
     }
   };
 
-  if (loading && !interviews.length) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="100vh">
-        <CircularProgress />
-      </Box>
-    );
-  }
+  const handleDeleteCancel = () => {
+    setDeleteDialogOpen(false);
+    setInterviewToDelete(null);
+  };
+
+  const handleSkillChange = (key, checked) => {
+    SKILLS_CONFIG[key].checked = checked;
+    setNewInterview(prev => ({ ...prev }));
+  };
+
+  const isInterviewActive = (endDate) => {
+    const end = new Date(endDate);
+    const now = new Date();
+    return end >= now;
+  };
+
+  const handleCopyCode = async (code) => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopiedCode(code);
+      setTimeout(() => setCopiedCode(null), 2000); // Reset after 2 seconds
+    } catch (err) {
+      console.error('Failed to copy code:', err);
+      // Fallback for browsers that don't support clipboard API
+      const textArea = document.createElement('textarea');
+      textArea.value = code;
+      document.body.appendChild(textArea);
+      textArea.select();
+      try {
+        document.execCommand('copy');
+        setCopiedCode(code);
+        setTimeout(() => setCopiedCode(null), 2000); // Reset after 2 seconds
+      } catch (err) {
+        console.error('Fallback copy failed:', err);
+      }
+      document.body.removeChild(textArea);
+    }
+  };
 
   return (
-    <Container maxWidth="lg">
-      <Box sx={{ mb: 4, mt: 2 }}>
-        <AppBar position="static" color="transparent" elevation={0}>
-          <Toolbar>
-            <Typography variant="h4" component="h1" sx={{ flexGrow: 1 }}>
-              <BriefcaseIcon style={{ marginRight: '10px', verticalAlign: 'bottom' }} />
-              Interview Dashboard
-            </Typography>
-            
-            <Button
-              variant="contained"
-              color="primary"
-              onClick={createTestInterview}
-              startIcon={<CodeIcon />}
-              sx={{ mr: 2 }}
-            >
-              Create Test Interview
-            </Button>
+    <div className="min-h-screen bg-white">
+      <Navbar />
 
-            <Button
-              variant="contained"
-              startIcon={<PlusIcon />}
-              onClick={() => setOpenDialog(true)}
-            >
-              Create Interview
-            </Button>
+      <Container maxWidth="lg" sx={{ 
+        py: 8,
+        minHeight: 'calc(100vh - 136px)'
+      }}>
+        {error && (
+          <Alert severity="error" sx={{ mb: 3 }}>
+            {error}
+          </Alert>
+        )}
 
-            <IconButton
-              onClick={toggleDarkMode}
-              color="inherit"
-              sx={{ ml: 2 }}
-            >
-              {darkMode ? <SunIcon /> : <MoonIcon />}
-            </IconButton>
-          </Toolbar>
-        </AppBar>
-      </Box>
+        <Box sx={{ mb: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Typography variant="h4" component="h1">
+            {companyData?.name || 'Company Dashboard'}
+          </Typography>
+          <Button
+            variant="contained"
+            startIcon={<PlusIcon />}
+            onClick={() => setCreateDialogOpen(true)}
+          >
+            Create Interview
+          </Button>
+        </Box>
 
-      {error && (
-        <Alert severity="error" sx={{ mb: 3 }}>
-          {error}
-        </Alert>
-      )}
+        {loading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+            <CircularProgress />
+          </Box>
+        ) : (
+          <Grid container spacing={3}>
+            {interviews.map((interview) => {
+              const isActive = isInterviewActive(interview.endDate);
+              const isCopied = copiedCode === interview.code;
+              
+              return (
+                <Grid item xs={12} sm={6} md={4} key={interview.id}>
+                  <Card>
+                    <CardContent>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+                        <Typography variant="h6" component="h2" gutterBottom>
+                          {interview.position}
+                        </Typography>
+                        <Chip 
+                          label={isActive ? "Active" : "Inactive"} 
+                          color={isActive ? "success" : "error"}
+                          size="small"
+                        />
+                      </Box>
+                      
+                      <Typography variant="body2" color="text.secondary" gutterBottom>
+                        Level: {interview.level}
+                      </Typography>
+                      
+                      <Typography variant="body2" color="text.secondary" gutterBottom>
+                        Available until: {new Date(interview.endDate).toLocaleDateString()}
+                      </Typography>
 
-      <Grid container spacing={3}>
-        {interviews.map((interview) => (
-          <Grid item xs={12} sm={6} md={4} key={interview.id}>
-            <Card>
-              <CardContent>
-                <Typography variant="h6" gutterBottom>
-                  {interview.position}
-                </Typography>
-                <Typography variant="body2" color="text.secondary" paragraph>
-                  Level: {interview.level}
-                </Typography>
-                <Box sx={{ mb: 2 }}>
-                  {interview.skills.map((skill) => (
-                    <Chip
-                      key={skill}
-                      label={SKILLS_CONFIG[skill]?.label || skill}
-                      size="small"
-                      sx={{ mr: 0.5, mb: 0.5 }}
-                    />
-                  ))}
-                </Box>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Button
-                    size="small"
-                    startIcon={<CopyIcon size={16} />}
-                    onClick={() => {
-                      navigator.clipboard.writeText(interview.code);
-                      alert('Interview code copied to clipboard!');
-                    }}
-                  >
-                    Copy Code
-                  </Button>
-                  <IconButton
-                    size="small"
-                    color="error"
-                    onClick={() => handleDeleteInterview(interview.id)}
-                  >
-                    <Trash2Icon size={16} />
-                  </IconButton>
-                </Box>
-              </CardContent>
-            </Card>
+                      <Typography variant="body2" color="text.secondary" gutterBottom>
+                        Code: {interview.code}
+                      </Typography>
+
+                      <Box sx={{ mt: 2, display: 'flex', gap: 1 }}>
+                        <Button
+                          size="small"
+                          variant={isCopied ? "contained" : "outlined"}
+                          color={isCopied ? "success" : "primary"}
+                          startIcon={isCopied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
+                          onClick={() => handleCopyCode(interview.code)}
+                          sx={{
+                            transition: 'all 0.2s ease-in-out',
+                          }}
+                        >
+                          {isCopied ? 'Copied!' : 'Copy Code'}
+                        </Button>
+                        <Button
+                          size="small"
+                          variant="contained"
+                          onClick={() => navigate(`/interview/${interview.id}/results`)}
+                        >
+                          View Results
+                        </Button>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          color="error"
+                          startIcon={<Trash2Icon size={16} />}
+                          onClick={() => handleDeleteClick(interview)}
+                        >
+                          Delete
+                        </Button>
+                      </Box>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              );
+            })}
           </Grid>
-        ))}
-      </Grid>
+        )}
 
-      <Dialog open={openDialog} onClose={() => setOpenDialog(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Create New Interview</DialogTitle>
-        <DialogContent>
-          <Box sx={{ mt: 2 }}>
+        <Dialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} maxWidth="sm" fullWidth>
+          <DialogTitle>Create New Interview</DialogTitle>
+          <DialogContent>
             <TextField
+              margin="normal"
+              required
               fullWidth
               label="Position"
               value={newInterview.position}
-              onChange={(e) => setNewInterview(prev => ({ ...prev, position: e.target.value }))}
-              sx={{ mb: 2 }}
+              onChange={(e) => setNewInterview({ ...newInterview, position: e.target.value })}
             />
-            
             <TextField
+              margin="normal"
+              required
               fullWidth
               multiline
-              rows={3}
+              rows={4}
               label="Description"
               value={newInterview.description}
-              onChange={(e) => setNewInterview(prev => ({ ...prev, description: e.target.value }))}
-              sx={{ mb: 2 }}
+              onChange={(e) => setNewInterview({ ...newInterview, description: e.target.value })}
+              helperText="Describe the skills the candidate must have and the tools they must master. This description will be used by the model to ask questions."
             />
-
-            <FormControl fullWidth sx={{ mb: 2 }}>
+            <FormControl fullWidth margin="normal" required>
               <InputLabel>Level</InputLabel>
               <Select
                 value={newInterview.level}
-                onChange={(e) => setNewInterview(prev => ({ ...prev, level: e.target.value }))}
                 label="Level"
+                onChange={(e) => setNewInterview({ ...newInterview, level: e.target.value })}
               >
-                <MenuItem value="junior">Junior</MenuItem>
-                <MenuItem value="middle">Middle</MenuItem>
-                <MenuItem value="senior">Senior</MenuItem>
+                <MenuItem value="Junior">Junior</MenuItem>
+                <MenuItem value="Middle">Middle</MenuItem>
+                <MenuItem value="Senior">Senior</MenuItem>
               </Select>
             </FormControl>
-
-            <Typography variant="subtitle1" gutterBottom>
-              Required Skills
+            <DatePicker
+              label="End Date"
+              value={newInterview.endDate}
+              onChange={(newValue) => setNewInterview({ ...newInterview, endDate: newValue })}
+              slotProps={{
+                textField: {
+                  fullWidth: true,
+                  margin: "normal",
+                  required: true
+                }
+              }}
+            />
+            <Typography variant="subtitle2" color="text.secondary" sx={{ mt: 2, mb: 1 }}>
+              Required Skills (Optional)
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+              These skills will be referenced by the AI when generating interview questions
             </Typography>
             <Grid container spacing={2}>
               {Object.entries(SKILLS_CONFIG).map(([key, { label, checked }]) => (
@@ -395,10 +395,7 @@ const CompanyDashboard = ({ darkMode, toggleDarkMode, companyId = 'test-company'
                     control={
                       <Checkbox
                         checked={checked}
-                        onChange={(e) => {
-                          SKILLS_CONFIG[key].checked = e.target.checked;
-                          setNewInterview(prev => ({ ...prev }));
-                        }}
+                        onChange={(e) => handleSkillChange(key, e.target.checked)}
                       />
                     }
                     label={label}
@@ -406,20 +403,63 @@ const CompanyDashboard = ({ darkMode, toggleDarkMode, companyId = 'test-company'
                 </Grid>
               ))}
             </Grid>
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setOpenDialog(false)}>Cancel</Button>
-          <Button
-            variant="contained"
-            onClick={handleCreateInterview}
-            disabled={!newInterview.position || loading}
-          >
-            {loading ? <CircularProgress size={24} /> : 'Create'}
-          </Button>
-        </DialogActions>
-      </Dialog>
-    </Container>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
+            <Button
+              onClick={handleCreateInterview}
+              variant="contained"
+              disabled={loading}
+            >
+              {loading ? <CircularProgress size={24} /> : 'Create'}
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Delete Confirmation Dialog */}
+        <Dialog
+          open={deleteDialogOpen}
+          onClose={handleDeleteCancel}
+          aria-labelledby="delete-dialog-title"
+          aria-describedby="delete-dialog-description"
+        >
+          <DialogTitle id="delete-dialog-title" sx={{ color: theme.palette.error.main }}>
+            Delete Interview
+          </DialogTitle>
+          <DialogContent>
+            <Typography id="delete-dialog-description">
+              Are you sure you want to delete the interview for position "{interviewToDelete?.position}"? 
+              This action cannot be undone.
+            </Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={handleDeleteCancel} color="primary">
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleDeleteConfirm} 
+              color="error" 
+              variant="contained"
+              startIcon={<Trash2Icon size={16} />}
+            >
+              Delete
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        <Snackbar
+          open={copiedCode !== null}
+          onClose={() => setCopiedCode(null)}
+          TransitionComponent={Fade}
+          message="Code copied to clipboard"
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+          autoHideDuration={2000}
+        />
+
+      </Container>
+
+      <Footer />
+    </div>
   );
 };
 

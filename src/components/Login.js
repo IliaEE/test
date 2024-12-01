@@ -1,193 +1,121 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { 
-  Container, 
-  Box, 
-  Typography, 
-  Button, 
+import { useNavigate, Link } from 'react-router-dom';
+import {
+  Container,
+  Box,
+  Typography,
   TextField,
+  Button,
   Paper,
-  IconButton,
-  Grid,
-  useTheme
+  Alert,
+  CircularProgress
 } from '@mui/material';
-import { 
-  Building, 
-  User, 
-  ArrowRight,
-  Moon,
-  Sun
-} from 'lucide-react';
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
+import { useFirebase } from '../contexts/FirebaseContext';
+import { Navbar } from './landing/Navbar';
+import { Footer } from './landing/Footer';
 
-const Login = ({ toggleColorMode, mode }) => {
+const Login = () => {
   const navigate = useNavigate();
-  const theme = useTheme();
-  const [tab, setTab] = useState(0);
+  const { auth, db } = useFirebase();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const [formData, setFormData] = useState({
     email: '',
-    password: '',
-    interviewCode: '',
+    password: ''
   });
 
-  const handleTabChange = (newValue) => {
-    setTab(newValue);
-    setFormData({
-      email: '',
-      password: '',
-      interviewCode: '',
-    });
-  };
-
-  const handleChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value,
-    });
-  };
-
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    if (tab === 0) {
-      navigate('/company/dashboard');
-    } else {
-      navigate(`/interview/${formData.interviewCode}`);
+    try {
+      setLoading(true);
+      setError('');
+      
+      const userCredential = await signInWithEmailAndPassword(auth, formData.email, formData.password);
+      const companyDoc = await getDoc(doc(db, 'companies', userCredential.user.uid));
+      
+      if (companyDoc.exists()) {
+        navigate('/company/dashboard');
+      } else {
+        setError('Account not found. Please register first.');
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
-    <Box 
-      sx={{ 
-        minHeight: '100vh',
+    <div className="min-h-screen bg-white">
+      <Navbar />
+      
+      <Container component="main" maxWidth="xs" sx={{ 
+        py: 8,
+        minHeight: 'calc(100vh - 136px)', // Adjust for navbar and footer height
         display: 'flex',
         flexDirection: 'column',
-        pt: 8,
-        pb: 6
-      }}
-    >
-      <IconButton
-        onClick={toggleColorMode}
-        sx={{
-          position: 'fixed',
-          top: 16,
-          right: 16,
-        }}
-      >
-        {mode === 'dark' ? (
-          <Sun />
-        ) : (
-          <Moon />
-        )}
-      </IconButton>
-
-      <Container maxWidth="lg">
-        <Box sx={{ textAlign: 'center', mb: 8 }}>
-          <Typography
-            component="h1"
-            variant="h2"
-            fontWeight="bold"
-            color="primary"
-            gutterBottom
-          >
-            Interview Assistant
+        justifyContent: 'center'
+      }}>
+        <Paper elevation={3} sx={{ p: 4, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <Typography component="h1" variant="h5" sx={{ mb: 3 }}>
+            Sign in to Interview Assistant
           </Typography>
-          <Typography variant="h5" color="text.secondary" paragraph>
-            Streamline your technical interviews with AI-powered assistance
-          </Typography>
-        </Box>
 
-        <Grid container spacing={3} maxWidth="sm" sx={{ mx: 'auto', mb: 6 }}>
-          <Grid item xs={12} sm={6}>
-            <Button
+          {error && (
+            <Alert severity="error" sx={{ width: '100%', mb: 2 }}>
+              {error}
+            </Alert>
+          )}
+
+          <Box component="form" onSubmit={handleSubmit} sx={{ width: '100%' }}>
+            <TextField
+              margin="normal"
+              required
               fullWidth
-              variant={tab === 0 ? 'contained' : 'outlined'}
-              onClick={() => handleTabChange(0)}
-              startIcon={<Building />}
-              size="large"
-            >
-              Company Login
-            </Button>
-          </Grid>
-          <Grid item xs={12} sm={6}>
-            <Button
+              id="email"
+              label="Email Address"
+              name="email"
+              autoComplete="email"
+              autoFocus
+              value={formData.email}
+              onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
+            />
+            <TextField
+              margin="normal"
+              required
               fullWidth
-              variant={tab === 1 ? 'contained' : 'outlined'}
-              onClick={() => handleTabChange(1)}
-              startIcon={<User />}
-              size="large"
-            >
-              Candidate Entry
-            </Button>
-          </Grid>
-        </Grid>
-
-        <Paper 
-          component="form" 
-          onSubmit={handleSubmit}
-          sx={{ 
-            maxWidth: 'sm',
-            mx: 'auto',
-            p: 4,
-          }}
-          elevation={2}
-        >
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-            {tab === 0 ? (
-              <>
-                <TextField
-                  fullWidth
-                  label="Company Email"
-                  name="email"
-                  type="email"
-                  value={formData.email}
-                  onChange={handleChange}
-                  required
-                  variant="outlined"
-                />
-                <TextField
-                  fullWidth
-                  label="Password"
-                  name="password"
-                  type="password"
-                  value={formData.password}
-                  onChange={handleChange}
-                  required
-                  variant="outlined"
-                />
-              </>
-            ) : (
-              <TextField
-                fullWidth
-                label="Interview Code"
-                name="interviewCode"
-                value={formData.interviewCode}
-                onChange={handleChange}
-                required
-                variant="outlined"
-                helperText="Please enter the code provided by the company"
-              />
-            )}
-
+              name="password"
+              label="Password"
+              type="password"
+              id="password"
+              autoComplete="current-password"
+              value={formData.password}
+              onChange={(e) => setFormData(prev => ({ ...prev, password: e.target.value }))}
+            />
             <Button
               type="submit"
+              fullWidth
               variant="contained"
-              size="large"
-              endIcon={<ArrowRight />}
+              sx={{ mt: 3, mb: 2 }}
+              disabled={loading}
             >
-              {tab === 0 ? 'Sign In' : 'Start Interview'}
+              {loading ? <CircularProgress size={24} /> : 'Sign In'}
             </Button>
+            <Box sx={{ textAlign: 'center' }}>
+              <Link to="/register" style={{ textDecoration: 'none' }}>
+                <Typography variant="body2" color="primary">
+                  New company? Register here
+                </Typography>
+              </Link>
+            </Box>
           </Box>
         </Paper>
-
-        <Typography 
-          variant="body2" 
-          color="text.secondary" 
-          align="center"
-          sx={{ mt: 8 }}
-        >
-          2024 Interview Assistant. All rights reserved.
-        </Typography>
       </Container>
-    </Box>
+      
+      <Footer />
+    </div>
   );
 };
 

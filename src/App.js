@@ -3,10 +3,15 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import { Box } from '@mui/material';
+import { LocalizationProvider } from '@mui/x-date-pickers';
+import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
+import { FirebaseProvider } from './contexts/FirebaseContext';
 import LandingPage from './components/LandingPage';
 import Login from './components/Login';
+import CompanyRegister from './components/CompanyRegister';
 import CompanyDashboard from './components/CompanyDashboard';
 import CandidateInterview from './components/CandidateInterview';
+import InterviewResults from './components/InterviewResults';
 import './styles/index.css';
 
 const theme = createTheme({
@@ -67,19 +72,25 @@ const theme = createTheme({
 
 function App() {
   return (
-    <ThemeProvider theme={theme}>
-      <CssBaseline />
-      <Router>
-        <Box className="app">
-          <Routes>
-            <Route path="/" element={<LandingPage />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/company/*" element={<CompanyDashboard />} />
-            <Route path="/interview/:interviewCode" element={<CandidateInterview />} />
-          </Routes>
-        </Box>
-      </Router>
-    </ThemeProvider>
+    <FirebaseProvider>
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <LocalizationProvider dateAdapter={AdapterDateFns}>
+          <Router>
+            <Box className="app">
+              <Routes>
+                <Route path="/" element={<LandingPage />} />
+                <Route path="/login" element={<Login />} />
+                <Route path="/register" element={<CompanyRegister />} />
+                <Route path="/company/dashboard" element={<CompanyDashboard />} />
+                <Route path="/interview/:code" element={<CandidateInterview />} />
+                <Route path="/interview/:interviewId/results" element={<InterviewResults />} />
+              </Routes>
+            </Box>
+          </Router>
+        </LocalizationProvider>
+      </ThemeProvider>
+    </FirebaseProvider>
   );
 }
 
