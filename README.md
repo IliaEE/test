@@ -17,3 +17,8 @@ AI-powered HR interview platform.
 - Node.js
 - Firebase
 - OpenAI API
+
+## Contact
+For questions and support, please contact:
+- Email: support@testhr.com
+- GitHub: https://github.com/IliaEE
