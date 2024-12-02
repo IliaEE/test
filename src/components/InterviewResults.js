@@ -1,201 +1,153 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import {
   Container,
-  Box,
-  Typography,
   Paper,
+  Typography,
   Table,
   TableBody,
   TableCell,
   TableContainer,
   TableHead,
   TableRow,
-  Button,
-  Alert,
   CircularProgress,
-  Chip
+  Alert,
+  Box,
+  TableSortLabel,
+  Link,
 } from '@mui/material';
-import { doc, getDoc } from 'firebase/firestore';
-import { useFirebase } from '../contexts/FirebaseContext';
-import { Navbar } from './landing/Navbar';
-import { Footer } from './landing/Footer';
+import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
+import { db } from '../firebase';
+import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
+import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 
 const InterviewResults = () => {
   const { interviewId } = useParams();
-  const navigate = useNavigate();
-  const { db, auth } = useFirebase();
-  
-  const [interview, setInterview] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState('');
+  const [interview, setInterview] = useState(null);
+  const [candidates, setCandidates] = useState([]);
+  const [sortOrder, setSortOrder] = useState('desc');
 
   useEffect(() => {
-    const loadInterview = async () => {
+    const loadResults = async () => {
       try {
-        setLoading(true);
-        setError(null);
-
-        const interviewRef = doc(db, 'interviews', interviewId);
-        const interviewSnap = await getDoc(interviewRef);
-
-        if (!interviewSnap.exists()) {
+        // Get interview data
+        const interviewDoc = await getDoc(doc(db, 'interviews', interviewId));
+        if (!interviewDoc.exists()) {
           setError('Interview not found');
           return;
         }
+        setInterview(interviewDoc.data());
 
-        const interviewData = {
-          id: interviewSnap.id,
-          ...interviewSnap.data()
-        };
+        // Get candidates results
+        const candidatesRef = collection(db, 'interviews', interviewId, 'candidates');
+        const candidatesSnapshot = await getDocs(candidatesRef);
+        const candidatesData = candidatesSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
 
-        // Check if the user has permission to view these results
-        if (interviewData.companyId !== auth.currentUser?.uid) {
-          setError('You do not have permission to view these results');
-          return;
-        }
-
-        setInterview(interviewData);
+        // Sort by score (highest first)
+        candidatesData.sort((a, b) => b.score - a.score);
+        setCandidates(candidatesData);
+        
       } catch (err) {
-        console.error('Error loading interview results:', err);
+        console.error('Error loading results:', err);
         setError('Failed to load interview results');
       } finally {
         setLoading(false);
       }
     };
 
-    if (interviewId && auth.currentUser) {
-      loadInterview();
-    }
-  }, [db, interviewId, auth.currentUser]);
+    loadResults();
+  }, [interviewId]);
+
+  const handleSort = () => {
+    const newOrder = sortOrder === 'asc' ? 'desc' : 'asc';
+    setSortOrder(newOrder);
+    const sortedCandidates = [...candidates].sort((a, b) => {
+      return newOrder === 'asc' ? a.score - b.score : b.score - a.score;
+    });
+    setCandidates(sortedCandidates);
+  };
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-white">
-        <Navbar />
-        <Container sx={{ py: 8, minHeight: 'calc(100vh - 136px)', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-          <CircularProgress />
-        </Container>
-        <Footer />
-      </div>
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="100vh">
+        <CircularProgress />
+      </Box>
     );
   }
 
   if (error) {
     return (
-      <div className="min-h-screen bg-white">
-        <Navbar />
-        <Container sx={{ py: 8, minHeight: 'calc(100vh - 136px)' }}>
-          <Alert severity="error" sx={{ mb: 3 }}>
-            {error}
-          </Alert>
-          <Button variant="contained" onClick={() => navigate('/company/dashboard')}>
-            Back to Dashboard
-          </Button>
-        </Container>
-        <Footer />
-      </div>
+      <Container maxWidth="sm" sx={{ mt: 4 }}>
+        <Alert severity="error">{error}</Alert>
+      </Container>
     );
   }
 
   return (
-    <div className="min-h-screen bg-white">
-      <Navbar />
-      <Container sx={{ py: 8, minHeight: 'calc(100vh - 136px)' }}>
-        <Box sx={{ mb: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Typography variant="h4" component="h1">
-            Interview Results
-          </Typography>
-          <Button variant="outlined" onClick={() => navigate('/company/dashboard')}>
-            Back to Dashboard
-          </Button>
-        </Box>
+    <Container maxWidth="lg" sx={{ py: 4 }}>
+      <Paper elevation={3} sx={{ p: 4 }}>
+        <Typography variant="h4" gutterBottom>
+          Interview Results
+        </Typography>
+        
+        <Typography variant="subtitle1" color="text.secondary" gutterBottom>
+          Position: {interview.position} | Level: {interview.level}
+        </Typography>
 
-        {interview && (
-          <>
-            <Paper sx={{ p: 3, mb: 4 }}>
-              <Typography variant="h6" gutterBottom>
-                {interview.position}
-              </Typography>
-              <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
-                <Typography variant="body2" color="text.secondary">
-                  Level: {interview.level}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Code: {interview.code}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Available until: {new Date(interview.endDate).toLocaleDateString()}
-                </Typography>
-              </Box>
-              <Chip 
-                label={new Date(interview.endDate) >= new Date() ? "Active" : "Inactive"} 
-                color={new Date(interview.endDate) >= new Date() ? "success" : "error"}
-                size="small"
-              />
-            </Paper>
-
-            {interview.candidates?.length > 0 ? (
-              <TableContainer component={Paper}>
-                <Table>
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Candidate Name</TableCell>
-                      <TableCell>Email</TableCell>
-                      <TableCell>Completion Date</TableCell>
-                      <TableCell>Score</TableCell>
-                      <TableCell>Status</TableCell>
-                      <TableCell align="right">Actions</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {interview.candidates.map((candidate, index) => (
-                      <TableRow key={index}>
-                        <TableCell>{candidate.name}</TableCell>
-                        <TableCell>{candidate.email}</TableCell>
-                        <TableCell>
-                          {candidate.completedAt ? new Date(candidate.completedAt).toLocaleString() : 'In Progress'}
-                        </TableCell>
-                        <TableCell>
-                          {candidate.score ? `${candidate.score}%` : 'N/A'}
-                        </TableCell>
-                        <TableCell>
-                          <Chip
-                            label={candidate.status || 'In Progress'}
-                            color={
-                              candidate.status === 'passed' ? 'success' :
-                              candidate.status === 'failed' ? 'error' :
-                              'default'
-                            }
-                            size="small"
-                          />
-                        </TableCell>
-                        <TableCell align="right">
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            onClick={() => navigate(`/interview/${interviewId}/candidate/${index}`)}
-                          >
-                            View Details
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            ) : (
-              <Paper sx={{ p: 4, textAlign: 'center' }}>
-                <Typography variant="h6" color="text.secondary">
-                  No candidates have taken this interview yet
-                </Typography>
-              </Paper>
-            )}
-          </>
-        )}
-      </Container>
-      <Footer />
-    </div>
+        <TableContainer component={Paper}>
+          <Table>
+            <TableHead>
+              <TableRow>
+                <TableCell>Candidate Name</TableCell>
+                <TableCell>Email</TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={true}
+                    direction={sortOrder}
+                    onClick={handleSort}
+                  >
+                    Score
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>Date</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {candidates.map((candidate) => (
+                <TableRow key={candidate.id}>
+                  <TableCell>{candidate.name}</TableCell>
+                  <TableCell>
+                    <Link 
+                      href={`mailto:${candidate.email}`}
+                      underline="hover"
+                      color="primary"
+                    >
+                      {candidate.email}
+                    </Link>
+                  </TableCell>
+                  <TableCell>{candidate.score}%</TableCell>
+                  <TableCell>
+                    {new Date(candidate.timestamp).toLocaleDateString()}
+                  </TableCell>
+                </TableRow>
+              ))}
+              {candidates.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={4} align="center">
+                    No candidates have completed this interview yet
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Paper>
+    </Container>
   );
 };
 

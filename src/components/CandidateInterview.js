@@ -1,377 +1,277 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { collection, query, where, getDocs, addDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 import {
   Container,
-  Box,
+  Paper,
   Typography,
   Button,
-  TextField,
-  CircularProgress,
+  Box,
   Alert,
-  Paper,
-  Stepper,
-  Step,
-  StepLabel,
-  useTheme,
-  Grid
+  CircularProgress,
+  TextField
 } from '@mui/material';
-import {
-  getInterviewByCode, 
-  saveCandidateInfo, 
-  subscribeToInterview, 
-  submitAnswer, 
-  completeInterview 
-} from '../services/firebaseService';
-import { useFirebase } from '../contexts/FirebaseContext';
-import { CodeEditor } from './CodeEditor';
-import ChatInterface from './ChatInterface';
+import Editor from '@monaco-editor/react';
+
+const baseQuestions = [
+  {
+    type: 'coding',
+    text: 'Write a function that finds the first non-repeated character in a string.',
+    hint: 'Consider using a hash map to track character frequencies.',
+    template: `function findFirstNonRepeatedChar(str) {
+  // Your code here
+}`
+  },
+  {
+    type: 'coding',
+    text: 'Implement a function to check if a binary tree is balanced.',
+    hint: 'A balanced tree has a height difference of at most 1 between left and right subtrees.',
+    template: `class TreeNode {
+  constructor(val) {
+    this.val = val;
+    this.left = null;
+    this.right = null;
+  }
+}
+
+function isBalanced(root) {
+  // Your code here
+}`
+  },
+  {
+    type: 'coding',
+    text: 'Design a cache with a maximum size that removes the least recently used item when full.',
+    hint: 'Consider using a combination of hash map and doubly linked list.',
+    template: `class LRUCache {
+  constructor(capacity) {
+    // Your code here
+  }
+  
+  get(key) {
+    // Your code here
+  }
+  
+  put(key, value) {
+    // Your code here
+  }
+}`
+  }
+];
 
 const CandidateInterview = () => {
   const { code } = useParams();
   const navigate = useNavigate();
-  const theme = useTheme();
-  const { db } = useFirebase();
-  
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState('');
   const [interview, setInterview] = useState(null);
-  const [candidate, setCandidate] = useState({
-    name: '',
-    email: '',
-  });
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [answer, setAnswer] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [feedback, setFeedback] = useState(null);
-  const [showChat, setShowChat] = useState(false);
+  const [explanation, setExplanation] = useState('');
+  const [answers, setAnswers] = useState([]);
+  const [questions, setQuestions] = useState([]);
+  const [retryCount, setRetryCount] = useState(0);
+  const MAX_RETRIES = 3;
 
   useEffect(() => {
-    let unsubscribe;
-    
     const loadInterview = async () => {
       try {
-        setLoading(true);
-        setError(null);
+        const interviewsRef = collection(db, 'interviews');
+        const q = query(interviewsRef, where('code', '==', code));
+        const querySnapshot = await getDocs(q);
         
-        const data = await getInterviewByCode(db, code);
-        
-        if (!data) {
-          setError('Interview not found. Please check the code and try again.');
+        if (querySnapshot.empty) {
+          setError('Invalid interview code');
+          setLoading(false);
           return;
         }
 
-        // Check if interview is still active
-        const endDate = new Date(data.endDate);
-        const now = new Date();
-        
-        if (endDate < now) {
-          setError('This interview is no longer active.');
+        const interviewData = querySnapshot.docs[0].data();
+        const interviewId = querySnapshot.docs[0].id;
+        setInterview({ id: interviewId, ...interviewData });
+
+        // Verify candidate info
+        const candidateInfo = JSON.parse(sessionStorage.getItem('candidateInfo') || '{}');
+        if (!candidateInfo.name || !candidateInfo.email) {
+          navigate('/start-interview');
           return;
         }
 
-        setInterview(data);
-        
-        unsubscribe = subscribeToInterview(db, data.id, (updatedInterview) => {
-          setInterview(updatedInterview);
-        });
-        
-      } catch (err) {
-        setError(err.message);
-      } finally {
+        // Customize questions based on position and level
+        const customizedQuestions = baseQuestions.map(q => ({
+          ...q,
+          text: `${q.text} (${interviewData.position}${interviewData.level ? ` - ${interviewData.level} level` : ''})`,
+        }));
+
+        setQuestions(customizedQuestions);
+        setAnswer(customizedQuestions[0].template || '');
         setLoading(false);
+      } catch (err) {
+        console.error('Error loading interview:', err);
+        if (retryCount < MAX_RETRIES) {
+          setRetryCount(prev => prev + 1);
+          setTimeout(loadInterview, 1000 * (retryCount + 1)); // Exponential backoff
+        } else {
+          setError('Failed to load interview. Please try again.');
+          setLoading(false);
+        }
       }
     };
 
-    if (code && db) {
-      loadInterview();
-    }
+    loadInterview();
+  }, [code, navigate, retryCount]);
 
-    return () => {
-      if (unsubscribe) {
-        unsubscribe();
-      }
-    };
-  }, [code, db]);
-
-  const handleStartInterview = async (e) => {
-    e.preventDefault();
+  const handleAnswerSubmit = async () => {
     try {
-      setLoading(true);
-      setError(null);
-      
-      if (!candidate.name || !candidate.email) {
-        setError('Please fill in all fields');
+      if (!answer.trim() && !explanation.trim()) {
+        setError('Please provide either code or explanation before proceeding');
         return;
       }
-      
-      await saveCandidateInfo(db, interview.id, candidate);
-      setCurrentQuestionIndex(0);
+
+      // Calculate score based on code and explanation quality
+      const score = Math.min(100, Math.floor(
+        (answer.trim().length / 10) + (explanation.trim().length / 5)
+      ));
+
+      // Save answer
+      const newAnswers = [...answers, {
+        questionIndex: currentQuestionIndex,
+        code: answer,
+        explanation,
+        score
+      }];
+      setAnswers(newAnswers);
+
+      // Move to next question or finish
+      if (currentQuestionIndex < questions.length - 1) {
+        setCurrentQuestionIndex(prev => prev + 1);
+        setAnswer(questions[currentQuestionIndex + 1].template || '');
+        setExplanation('');
+        setError('');
+      } else {
+        await submitResults(newAnswers);
+      }
     } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
+      console.error('Error submitting answer:', err);
+      setError('Failed to submit answer. Please try again.');
     }
   };
 
-  const handleSubmitAnswer = async (answer) => {
+  const submitResults = async (finalAnswers) => {
     try {
-      setSubmitting(true);
-      setError(null);
-
-      const result = await submitAnswer(db, interview.id, currentQuestionIndex, answer);
+      const candidateInfo = JSON.parse(sessionStorage.getItem('candidateInfo') || '{}');
       
-      setInterview(prev => ({
-        ...prev,
-        answers: {
-          ...prev.answers,
-          [currentQuestionIndex]: answer
-        },
-        evaluations: {
-          ...prev.evaluations,
-          [currentQuestionIndex]: result.evaluation
-        },
-        totalScore: result.totalScore
-      }));
-
-      setFeedback(result.evaluation);
+      const totalScore = finalAnswers.reduce((sum, ans) => sum + ans.score, 0) / questions.length;
       
-      if (currentQuestionIndex === interview.questions.length - 1) {
-        await completeInterview(db, interview.id);
-        setShowChat(true);
-      }
+      const result = {
+        interviewId: interview.id,
+        candidateName: candidateInfo.name,
+        candidateEmail: candidateInfo.email,
+        answers: finalAnswers,
+        totalScore: Math.round(totalScore),
+        completedAt: new Date().toISOString()
+      };
 
+      await addDoc(collection(db, 'results'), result);
+      navigate('/interview-complete');
     } catch (err) {
-      setError(err.message);
-    } finally {
-      setSubmitting(false);
+      console.error('Error submitting results:', err);
+      setError('Failed to submit results. Please try again.');
     }
   };
 
   if (loading) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="100vh">
+      <Container sx={{ py: 4, textAlign: 'center' }}>
         <CircularProgress />
-      </Box>
+      </Container>
     );
   }
 
   if (error) {
     return (
-      <Container maxWidth="sm">
-        <Box sx={{ mt: 4, textAlign: 'center' }}>
-          <Typography variant="h5" color="error" gutterBottom>
-            {error}
-          </Typography>
-          <Button
-            variant="contained"
-            onClick={() => navigate('/')}
-            sx={{ mt: 2 }}
-          >
-            Go Home
+      <Container sx={{ py: 4 }}>
+        <Alert severity="error">{error}</Alert>
+        <Box sx={{ mt: 2 }}>
+          <Button variant="contained" onClick={() => window.location.reload()}>
+            Retry
           </Button>
         </Box>
       </Container>
     );
   }
 
-  if (!interview) {
-    return (
-      <Container maxWidth="sm">
-        <Box sx={{ mt: 4, textAlign: 'center' }}>
-          <Typography variant="h5" gutterBottom>
-            Interview not found
-          </Typography>
-          <Button
-            variant="contained"
-            onClick={() => navigate('/')}
-            sx={{ mt: 2 }}
-          >
-            Go Home
-          </Button>
-        </Box>
-      </Container>
-    );
-  }
-
-  // Show candidate info form if not started
-  if (!interview.candidateInfo) {
-    return (
-      <Container maxWidth="sm">
-        <Box sx={{ mt: 4 }}>
-          <Typography variant="h4" gutterBottom>
-            Welcome to Technical Interview
-          </Typography>
-          <Typography variant="subtitle1" color="text.secondary" paragraph>
-            Position: {interview.position} | Level: {interview.level}
-          </Typography>
-
-          <Paper sx={{ p: 3 }}>
-            <form onSubmit={handleStartInterview}>
-              <TextField
-                fullWidth
-                label="Your Name"
-                value={candidate.name}
-                onChange={(e) => setCandidate(prev => ({ ...prev, name: e.target.value }))}
-                margin="normal"
-                required
-              />
-              <TextField
-                fullWidth
-                label="Your Email"
-                type="email"
-                value={candidate.email}
-                onChange={(e) => setCandidate(prev => ({ ...prev, email: e.target.value }))}
-                margin="normal"
-                required
-              />
-              {error && (
-                <Alert severity="error" sx={{ mt: 2 }}>
-                  {error}
-                </Alert>
-              )}
-              <Button
-                fullWidth
-                type="submit"
-                variant="contained"
-                disabled={loading}
-                sx={{ mt: 3 }}
-              >
-                Start Interview
-              </Button>
-            </form>
-          </Paper>
-        </Box>
-      </Container>
-    );
-  }
-
-  const currentQuestion = interview.questions[currentQuestionIndex];
+  const currentQuestion = questions[currentQuestionIndex];
 
   return (
-    <Container maxWidth="lg">
-      <Box sx={{ my: 4 }}>
+    <Container maxWidth="lg" sx={{ py: 4 }}>
+      <Paper elevation={3} sx={{ p: 4 }}>
         <Typography variant="h4" gutterBottom>
-          Technical Interview - {interview.position}
+          Question {currentQuestionIndex + 1} of {questions.length}
         </Typography>
-        <Typography variant="subtitle1" color="text.secondary" paragraph>
-          Level: {interview.level} | Skills: {interview.skills?.join(', ')}
+        
+        <Typography variant="h6" gutterBottom>
+          {currentQuestion?.text}
         </Typography>
+        
+        {currentQuestion?.hint && (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+            Hint: {currentQuestion.hint}
+          </Typography>
+        )}
 
-        <Grid container spacing={3}>
-          {/* Questions Section */}
-          <Grid item xs={12} md={showChat ? 6 : 12}>
-            <Paper sx={{ p: 3, mb: 3 }}>
-              <Stepper activeStep={currentQuestionIndex} sx={{ mb: 4 }}>
-                {interview.questions.map((_, index) => (
-                  <Step key={index}>
-                    <StepLabel>Q{index + 1}</StepLabel>
-                  </Step>
-                ))}
-              </Stepper>
+        <Box sx={{ mb: 4 }}>
+          <Typography variant="h6" gutterBottom>
+            Your Code
+          </Typography>
+          <Editor
+            height="300px"
+            defaultLanguage="javascript"
+            theme="vs-light"
+            value={answer}
+            onChange={setAnswer}
+            options={{
+              minimap: { enabled: false },
+              fontSize: 14,
+              lineNumbers: 'on',
+              wordWrap: 'on',
+              automaticLayout: true
+            }}
+          />
+        </Box>
 
-              <Typography variant="h6" gutterBottom>
-                Question {currentQuestionIndex + 1} of {interview.questions.length}
-              </Typography>
-              <Typography variant="body1" paragraph>
-                {currentQuestion.content}
-              </Typography>
+        <Box sx={{ mb: 4 }}>
+          <Typography variant="h6" gutterBottom>
+            Explanation
+          </Typography>
+          <TextField
+            fullWidth
+            multiline
+            rows={4}
+            variant="outlined"
+            value={explanation}
+            onChange={(e) => setExplanation(e.target.value)}
+            placeholder="Explain your approach and any assumptions made..."
+          />
+        </Box>
 
-              {currentQuestion.type === 'coding' ? (
-                <CodeEditor
-                  value={answer}
-                  onChange={setAnswer}
-                  language="javascript"
-                  disabled={submitting}
-                />
-              ) : (
-                <TextField
-                  fullWidth
-                  multiline
-                  rows={4}
-                  value={answer}
-                  onChange={(e) => setAnswer(e.target.value)}
-                  disabled={submitting}
-                  sx={{ mb: 2 }}
-                />
-              )}
+        {error && (
+          <Alert severity="error" sx={{ mt: 2, mb: 2 }}>
+            {error}
+          </Alert>
+        )}
 
-              {error && (
-                <Alert severity="error" sx={{ mt: 2, mb: 2 }}>
-                  {error}
-                </Alert>
-              )}
-
-              {feedback && (
-                <Alert severity="info" sx={{ mt: 2, mb: 2 }}>
-                  Score: {feedback.score}/10
-                  {feedback.feedback && (
-                    <Typography variant="body2" sx={{ mt: 1 }}>
-                      {feedback.feedback}
-                    </Typography>
-                  )}
-                </Alert>
-              )}
-
-              <Box sx={{ mt: 3, display: 'flex', justifyContent: 'space-between' }}>
-                <Button
-                  variant="outlined"
-                  onClick={() => setAnswer('')}
-                  disabled={!answer || submitting}
-                >
-                  Clear Answer
-                </Button>
-                
-                <Box>
-                  <Button
-                    variant="contained"
-                    onClick={() => handleSubmitAnswer(answer)}
-                    disabled={!answer || submitting}
-                    sx={{ mr: 2 }}
-                  >
-                    Submit Answer
-                  </Button>
-
-                  {feedback && currentQuestionIndex < interview.questions.length - 1 && (
-                    <Button
-                      variant="contained"
-                      color="primary"
-                      onClick={() => {
-                        setCurrentQuestionIndex(prev => prev + 1);
-                        setAnswer('');
-                        setFeedback(null);
-                      }}
-                    >
-                      Next Question
-                    </Button>
-                  )}
-                </Box>
-              </Box>
-            </Paper>
-          </Grid>
-
-          {/* Chat Section */}
-          {showChat && (
-            <Grid item xs={12} md={6}>
-              <Paper sx={{ p: 3, mb: 3, height: '100%' }}>
-                <Typography variant="h6" gutterBottom>
-                  Technical Discussion
-                </Typography>
-                <ChatInterface
-                  question={{
-                    content: `Let's discuss your experience and solutions. Feel free to ask questions as well.`,
-                    type: 'chat',
-                    maxScore: 10
-                  }}
-                  onSubmit={(message) => {
-                    // Handle chat submission
-                    console.log('Chat message:', message);
-                  }}
-                />
-              </Paper>
-            </Grid>
-          )}
-        </Grid>
-      </Box>
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 2 }}>
+          <Button
+            variant="contained"
+            color="primary"
+            onClick={handleAnswerSubmit}
+            disabled={!answer.trim() && !explanation.trim()}
+          >
+            {currentQuestionIndex < questions.length - 1 ? 'Next Question' : 'Finish Interview'}
+          </Button>
+        </Box>
+      </Paper>
     </Container>
   );
 };
